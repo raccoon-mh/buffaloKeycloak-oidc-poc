@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 
 	"oidctest/locales"
 	"oidctest/public"
@@ -82,6 +83,11 @@ func App() *buffalo.App {
 		u2.Use(requestIAM)
 		u2.GET("/price", PriceDashHandler)
 
+		protected := app.Group("/protected")
+		protected.Use(islogin)
+		protected.Use(requestIAM)
+		protected.GET("/premium", PremiumHandler)
+
 		app.ServeFiles("/", http.FS(public.FS())) // serve files from the public directory
 	}
 
@@ -155,17 +161,16 @@ func requestIAM(next buffalo.Handler) buffalo.Handler {
 		if err != nil {
 			log.Println("Error while reading the response bytes:", err)
 		}
+
 		fmt.Println(string([]byte(body)))
-		// GetResourcePolicies(ctx context.Context, token string, realm string, params gocloak.GetResourcePoliciesParams) ([]*gocloak.ResourcePolicyRepresentation, error)
-		temp := "urn:servlet-authz:protected:resource"
-		PoliciesParams := gocloak.GetResourcePoliciesParams{
-			Name: &temp,
+		if strings.Contains(string([]byte(body)), "Hello") {
+			fmt.Println("Good to go")
+			err = next(c)
+		} else {
+			fmt.Println("Access denide")
+			return c.Redirect(302, "/")
 		}
 
-		a, err := KC_client.GetResourcePolicies(c, fmt.Sprintf("%s", c.Session().Get("token")), KC_realm, PoliciesParams)
-		fmt.Println(a, err)
-
-		err = next(c)
 		return err
 	}
 }

@@ -66,3 +66,7 @@ func UserDashHandler(c buffalo.Context) error {
 func PriceDashHandler(c buffalo.Context) error {
 	return c.Render(http.StatusOK, r.HTML("Dash/priceDash.html"))
 }
+
+func PremiumHandler(c buffalo.Context) error {
+	return c.Render(http.StatusOK, r.HTML("premium/userDash.html"))
+}
