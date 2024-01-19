@@ -1,17 +1,22 @@
 package actions
 
 import (
+	"fmt"
+	"io/ioutil"
+	"log"
 	"net/http"
+	"os"
 
 	"oidctest/locales"
 	"oidctest/public"
 
+	"github.com/Nerzal/gocloak/v13"
 	"github.com/gobuffalo/buffalo"
 	"github.com/gobuffalo/envy"
-	csrf "github.com/gobuffalo/mw-csrf"
 	forcessl "github.com/gobuffalo/mw-forcessl"
 	i18n "github.com/gobuffalo/mw-i18n/v2"
 	paramlogger "github.com/gobuffalo/mw-paramlogger"
+	"github.com/gorilla/sessions"
 	"github.com/unrolled/secure"
 )
 
@@ -40,30 +45,54 @@ var (
 func App() *buffalo.App {
 	if app == nil {
 		app = buffalo.New(buffalo.Options{
-			Env:         ENV,
-			SessionName: "_oidctest_session",
+			Env:          ENV,
+			SessionName:  "_oidctest_session",
+			SessionStore: sessions.NewCookieStore([]byte("some session secret")),
 		})
 
 		// Automatically redirect to SSL
-		app.Use(forceSSL())
+		// app.Use(forceSSL())
 
 		// Log request parameters (filters apply).
 		app.Use(paramlogger.ParameterLogger)
 
 		// Protect against CSRF attacks. https://www.owasp.org/index.php/Cross-Site_Request_Forgery_(CSRF)
 		// Remove to disable this.
-		app.Use(csrf.New)
+		// app.Use(csrf.New)
 
 		// Setup and use translations:
 		app.Use(translations())
 
-		app.GET("/", HomeHandler)
+		app.GET("/", RootHandler)
+
+		app.GET("/login", LoginHandler)
+		app.POST("/login", LoginHandler)
+
+		alluser := app.Group("/authed")
+		alluser.Use(islogin)
+		alluser.GET("/logout", LogoutHandler)
+		alluser.GET("/home", HomeHandler)
+
+		u := alluser.Group("/dash")
+		u.Use(requestIAM)
+		u.GET("/admin", AdminDashHandler)
+		u.GET("/user", UserDashHandler)
+
+		u2 := alluser.Group("/dash2")
+		u2.Use(requestIAM)
+		u2.GET("/price", PriceDashHandler)
 
 		app.ServeFiles("/", http.FS(public.FS())) // serve files from the public directory
 	}
 
 	return app
 }
+
+var KC_uri = os.Getenv("KC_uri")
+var KC_clientID = os.Getenv("KC_clientID")
+var KC_clientSecret = os.Getenv("KC_clientSecret")
+var KC_realm = os.Getenv("KC_realm")
+var KC_client = gocloak.NewClient(KC_uri)
 
 // translations will load locale files, set up the translator `actions.T`,
 // and will return a middleware to use to load the correct locale for each
@@ -87,4 +116,56 @@ func forceSSL() buffalo.MiddlewareFunc {
 		SSLRedirect:     ENV == "production",
 		SSLProxyHeaders: map[string]string{"X-Forwarded-Proto": "https"},
 	})
+}
+
+func islogin(next buffalo.Handler) buffalo.Handler {
+	return func(c buffalo.Context) error {
+		token := fmt.Sprintf("%s", c.Session().Get("token"))
+		_, jwt, decodeerr := KC_client.DecodeAccessToken(c, token, KC_realm)
+
+		if decodeerr != nil || jwt.Valid() != nil {
+			fmt.Println("$$$$$$$$$$$$$$$$$$$$$$$$ Token err $$$$$$$$$$$$$$$$$$$$$$$$")
+			return c.Redirect(302, "/")
+		}
+		err := next(c)
+		return err
+	}
+}
+
+func requestIAM(next buffalo.Handler) buffalo.Handler {
+	return func(c buffalo.Context) error {
+		currentURL := c.Request().URL.String()
+		currentMethod := c.Request().Method
+		bearer := "Bearer " + fmt.Sprintf("%s", c.Session().Get("token"))
+
+		req, err := http.NewRequest(currentMethod, os.Getenv("IAM_Filter_endpoint")+currentURL, nil)
+		if err != nil {
+			panic(err)
+		}
+		req.Header.Add("Authorization", bearer)
+
+		client := &http.Client{}
+		resp, err := client.Do(req)
+		if err != nil {
+			fmt.Println("Error on response.\n[ERROR] -", err)
+		}
+		defer resp.Body.Close()
+
+		body, err := ioutil.ReadAll(resp.Body)
+		if err != nil {
+			log.Println("Error while reading the response bytes:", err)
+		}
+		fmt.Println(string([]byte(body)))
+		// GetResourcePolicies(ctx context.Context, token string, realm string, params gocloak.GetResourcePoliciesParams) ([]*gocloak.ResourcePolicyRepresentation, error)
+		temp := "urn:servlet-authz:protected:resource"
+		PoliciesParams := gocloak.GetResourcePoliciesParams{
+			Name: &temp,
+		}
+
+		a, err := KC_client.GetResourcePolicies(c, fmt.Sprintf("%s", c.Session().Get("token")), KC_realm, PoliciesParams)
+		fmt.Println(a, err)
+
+		err = next(c)
+		return err
+	}
 }
