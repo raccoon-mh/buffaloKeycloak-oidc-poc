@@ -1,3 +1,14 @@
+
+# Buffalo and Keycloak for oidc test with mc-iam-manager
+```env
+KC_uri = https://XXXXX.XXX:XXXX
+KC_realm = XXXXX
+KC_clientID = XXXXXX
+KC_clientSecret = XXXXXX
+
+IAM_Filter_endpoint = https://XXXXX.XXX:AAAA <- mc-iam-manager
+```
+
 # Welcome to Buffalo
 
 Thank you for choosing Buffalo for your web development needs.
